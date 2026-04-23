@@ -36,6 +36,12 @@ RNN 雖然引入了隱藏狀態 $h_t$ 作為「記憶」，但因梯度在反向
 
 LSTM 的解法是引入第二條記憶通道——**cell state $C_t$**。透過三個「閘門（gate）」精確控制資訊的保留、寫入與讀出，讓梯度有一條更直接的傳遞路徑。
 
+<img src="../image/lstm.webp" alt="lstm"/>
+
+<img src="../image/lstm-time-series.webp" alt="lstm in time series"/>
+
+圖片來源： https://www.geeksforgeeks.org/deep-learning/deep-learning-introduction-to-long-short-term-memory/
+
 ### 1.2 符號表
 
 在時間步 $t$，LSTM 使用兩個狀態向量：
@@ -404,9 +410,71 @@ $$\boxed{h_t = u_t \odot h_{t-1} + (1 - u_t) \odot \tilde{h}_t}$$
 
 在舊記憶 $h_{t-1}$ 與新候選 $\tilde{h}_t$ 之間做加權混合。
 
+### 11.5 輸出層
+
+由 hidden state $h_t$ 計算 logits，再經 softmax 得到預測機率：
+
+$$z_t = h_t W_y + b_y \qquad \hat{y}_t = \text{softmax}(z_t)$$
+
+其中 $W_y \in \mathbb{R}^{d_h \times V}$，$b_y \in \mathbb{R}^V$，$V$ 為詞彙表大小（或輸出維度）。
+
+第 $t$ 步的交叉熵損失：
+
+$$L_t = -\sum_k y_{t,k} \log \hat{y}_{t,k}$$
+
+序列總損失：
+
+$$L = \sum_{t=1}^{T} L_t$$
+
+利用 Softmax + Cross-Entropy 的組合導數，輸出層的誤差訊號有非常簡潔的形式：
+
+$$\boxed{\delta^y_t \equiv \frac{\partial L_t}{\partial z_t} = \hat{y}_t - y_t}$$
+
+輸出層參數梯度對整個序列求和：
+
+$$\frac{\partial L}{\partial W_y} = \sum_{t=1}^{T} h_t^\top \delta^y_t, \qquad \frac{\partial L}{\partial b_y} = \sum_{t=1}^{T} \delta^y_t$$
+
+$\delta^y_t$ 也是反向傳播的起點——梯度將從此處往 $h_t$ 回傳，進入 GRU 各 gate 的反向鏈路。
+
 ---
 
 ## 12. GRU 的反向傳播
+
+### 12.0 輸出層的向後傳播
+
+反向傳播從輸出層開始，沿時間 $t = T \to 1$ 逐步回傳。
+
+**Step A：輸出誤差訊號**
+
+由 Softmax + Cross-Entropy 的組合導數：
+
+$$\delta^y_t = \hat{y}_t - y_t$$
+
+**Step B：輸出層參數梯度**
+
+由 $z_t = h_t W_y + b_y$，利用鏈鎖律對整個序列累加：
+
+$$\boxed{\frac{\partial L}{\partial W_y} = \sum_{t=1}^{T} h_t^\top \delta^y_t}, \qquad \boxed{\frac{\partial L}{\partial b_y} = \sum_{t=1}^{T} \delta^y_t}$$
+
+**Step C：梯度傳回 $h_t$**
+
+$h_t$ 影響損失的路徑有兩條：
+
+- **路徑 A（當前輸出）**：$h_t \to z_t \to L_t$
+
+$$\left.\frac{\partial L}{\partial h_t}\right|_{\text{當前}} = \delta^y_t W_y^\top$$
+
+- **路徑 B（未來時間步）**：$h_t$ 作為 $h_{t+1}$ 計算中的 $h_{t-1}$，透過 update gate、reset gate 與 candidate state 傳回梯度（即下方 12.6 的 $\dfrac{\partial L}{\partial h_{t-1}}$，在時間步 $t+1$ 時計算）
+
+$$\left.\frac{\partial L}{\partial h_t}\right|_{\text{未來}} = \delta^{h,\text{future}}_t$$
+
+合併兩條路徑，定義後續各節使用的 $\delta^h_t$：
+
+$$\boxed{\delta^h_t = \delta^y_t W_y^\top + \delta^{h,\text{future}}_t}$$
+
+初始條件（最後一步）：$\delta^{h,\text{future}}_T = \mathbf{0}$。
+
+---
 
 定義 $\delta^h_t \equiv \dfrac{\partial L}{\partial h_t}$（來自當前輸出層與下一時間步兩部分之和）。
 
@@ -472,6 +540,10 @@ $$\boxed{\frac{\partial L}{\partial h_{t-1}} = \underbrace{\delta^h_t \odot u_t}
 
 ## 13. GRU 參數梯度整理
 
+**輸出層參數：**
+
+$$\frac{\partial L}{\partial W_y} = \sum_t h_t^\top \delta^y_t, \quad \frac{\partial L}{\partial b_y} = \sum_t \delta^y_t$$
+
 **Candidate hidden state 參數：**
 
 $$\frac{\partial L}{\partial W_{xh}} = \sum_t x_t^\top \delta^h_{a,t}, \quad \frac{\partial L}{\partial W_{hh}} = \sum_t m_t^\top \delta^h_{a,t}, \quad \frac{\partial L}{\partial b_h} = \sum_t \delta^h_{a,t}$$
@@ -492,7 +564,11 @@ $$\frac{\partial L}{\partial x_t} = \delta^u_{a,t} W_{xu}^\top + \delta^r_{a,t} 
 
 ## 14. GRU 完整反向傳播流程
 
-給定 $\delta^h_t = \dfrac{\partial L}{\partial h_t}$，單一時間步的 backward 分五步：
+對整個序列，從 $t = T$ 往回迴圈，初始條件 $\delta^{h,\text{future}}_T = \mathbf{0}$，單一時間步的 backward 分六步：
+
+**Step 0.** 輸出層反傳，計算本步 $\delta^h_t$
+
+$$\delta^y_t = \hat{y}_t - y_t, \qquad \delta^h_t = \delta^y_t W_y^\top + \delta^{h,\text{future}}_t$$
 
 **Step 1.** 從 $h_t$ 更新式分流
 
@@ -512,9 +588,15 @@ $$\frac{\partial L}{\partial m_t} = \delta^h_{a,t} W_{hh}^\top, \qquad \delta^r_
 
 $$\delta^r_{a,t} = \delta^r_t \odot r_t(1 - r_t), \qquad \delta^u_{a,t} = \delta^u_t \odot u_t(1 - u_t)$$
 
-**Step 5.** 合併對 $h_{t-1}$ 的總梯度
+**Step 5.** 合併對 $h_{t-1}$ 的總梯度，作為下一步的 $\delta^{h,\text{future}}_{t-1}$
 
 $$\frac{\partial L}{\partial h_{t-1}} = \delta^{h \to h_{t-1}}_{\text{direct}} + \delta^{h \to h_{t-1}}_{\text{cand}} + \delta^r_{a,t} W_{hr}^\top + \delta^u_{a,t} W_{hu}^\top$$
+
+**（各步同時累積）** 輸出層與各 gate 的參數梯度
+
+$$\frac{\partial L}{\partial W_y} \mathrel{+}= h_t^\top \delta^y_t, \quad \frac{\partial L}{\partial b_y} \mathrel{+}= \delta^y_t$$
+
+$$\frac{\partial L}{\partial W_{xh}} \mathrel{+}= x_t^\top \delta^h_{a,t}, \quad \frac{\partial L}{\partial W_{hh}} \mathrel{+}= m_t^\top \delta^h_{a,t}, \quad \cdots \text{（其餘 gate 參數類同）}$$
 
 ---
 
