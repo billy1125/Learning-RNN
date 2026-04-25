@@ -82,6 +82,8 @@ $$y = (y_1, y_2, \ldots, y_{T_y})$$
 
 $$c = h_{T_x}^{\text{enc}}$$
 
+<img src="../image/encoder-decoder.jpeg" alt="Encoder Decoder" style="width: 70%;"/>
+
 這樣做的問題是：
 
 1. **輸入句子太長時，最後一個 hidden state 不容易保留所有資訊**
@@ -112,6 +114,10 @@ Bidirectional Encoder 會同時做：
 $$h_t^{\text{enc}} = [\overrightarrow{h}_t ; \overleftarrow{h}_t]$$
 
 因此第 $t$ 個位置的 encoder 表示，能同時包含「左邊上下文」與「右邊上下文」。
+
+<img src="../image/attention-mechanism.webp" alt="Attention Mechanism"/>
+
+圖片來源： https://towardsdatascience.com/rethinking-thinking-how-do-attention-mechanisms-actually-work-a6f67d313f99/
 
 ---
 
