@@ -36,9 +36,9 @@ RNN 雖然引入了隱藏狀態 $h_t$ 作為「記憶」，但因梯度在反向
 
 LSTM 的解法是引入第二條記憶通道——**cell state $C_t$**。透過三個「閘門（gate）」精確控制資訊的保留、寫入與讀出，讓梯度有一條更直接的傳遞路徑。
 
-<img src="../image/lstm.webp" alt="lstm"/>
+![lstm](../image/lstm.webp)
 
-<img src="../image/lstm-time-series.webp" alt="lstm in time series"/>
+![lstm in time series](../image/lstm-time-series.webp)
 
 圖片來源： https://www.geeksforgeeks.org/deep-learning/deep-learning-introduction-to-long-short-term-memory/
 
