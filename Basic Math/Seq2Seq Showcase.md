@@ -10,14 +10,16 @@
 1. [Seq2Seq 是什麼？](#1-seq2seq-是什麼)
 2. [本例的任務設定](#2-本例的任務設定)
 3. [基本公式](#3-基本公式)
-4. [Encoder 前向傳播](#4-encoder-前向傳播)
-5. [Decoder 前向傳播](#5-decoder-前向傳播)
-6. [Loss 計算](#6-loss-計算)
-7. [Output Layer 反向傳播](#7-output-layer-反向傳播)
-8. [Decoder Hidden 反向傳播](#8-decoder-hidden-反向傳播)
-9. [梯度如何傳回 Encoder](#9-梯度如何傳回-encoder)
-10. [參數更新示意](#10-參數更新示意)
-11. [一句話總結](#11-一句話總結)
+4. [機率視角：本例在算什麼？](#4-機率視角本例在算什麼)
+5. [Encoder 前向傳播](#5-encoder-前向傳播)
+6. [Decoder 前向傳播](#6-decoder-前向傳播)
+7. [整段機率 $P(y \mid x)$ 的數值](#7-整段機率-py-x-的數值)
+8. [Loss 計算](#8-loss-計算)
+9. [Output Layer 反向傳播](#9-output-layer-反向傳播)
+10. [Decoder Hidden 反向傳播](#10-decoder-hidden-反向傳播)
+11. [梯度如何傳回 Encoder](#11-梯度如何傳回-encoder)
+12. [參數更新示意](#12-參數更新示意)
+13. [一句話總結](#13-一句話總結)
 
 ---
 
@@ -43,6 +45,12 @@ Seq2Seq 的全名是 **Sequence to Sequence**，意思是：
 
 - Encoder 像「看完整題目的人」
 - Decoder 像「根據理解開始作答的人」
+
+而從機率角度看（第 4 節會詳細說明），整個 Seq2Seq 其實在做一件事：
+
+$$\text{Encoder} \;\longrightarrow\; P(y \mid x) \;\longrightarrow\; \text{Decoder}$$
+
+> **學一個條件機率「輸入 $x$ 時，輸出 $y$ 的機率」。**
 
 ---
 
@@ -90,6 +98,10 @@ $$
 - 第 1 步目標是 $B$
 - 第 2 步目標是 $C$
 
+換成機率的講法：
+
+> 我們希望模型學到 $P(y_1 = B, y_2 = C \mid x_1 = A, x_2 = B)$ 越大越好。
+
 ---
 
 ## 3. 基本公式
@@ -127,7 +139,7 @@ $$
 再用 softmax 變成機率：
 
 $$
-\hat{y}_{t,k} = \frac{e^{o_{t,k}}}{e^{o_{t,A}} + e^{o_{t,B}} + e^{o_{t,C}}}
+\hat{y}_{t,k} = P(y_t = k \mid y_{<t}, x) = \frac{e^{o_{t,k}}}{e^{o_{t,A}} + e^{o_{t,B}} + e^{o_{t,C}}}
 $$
 
 ### 3.4 Loss
@@ -135,7 +147,7 @@ $$
 每一步用 cross entropy：
 
 $$
-\mathcal{L}_t = -\log \hat{y}_t[y_t^*]
+\mathcal{L}_t = -\log \hat{y}_t[y_t^*] = -\log P(y_t^* \mid y_{<t}, x)
 $$
 
 總 loss 取平均：
@@ -146,9 +158,50 @@ $$
 
 ---
 
-## 4. Encoder 前向傳播
+## 4. 機率視角：本例在算什麼？
 
-### 4.1 參數設定
+在開始數值模擬之前，先看清楚我們到底要算什麼。
+
+### 4.1 整段機率的分解
+
+對本例來說，我們想計算的整段條件機率是：
+
+$$P(y_1, y_2 \mid x_1, x_2) = P(B, C \mid A, B)$$
+
+但「整段」很難直接算，所以用**機率鏈鎖律**拆開：
+
+$$\boxed{P(y_1, y_2 \mid x) = P(y_1 \mid x) \cdot P(y_2 \mid y_1, x)}$$
+
+具體到本例就是：
+
+$$P(B, C \mid A, B) = P(y_1 = B \mid A, B) \times P(y_2 = C \mid y_1 = B, A, B)$$
+
+### 4.2 每一步條件機率對應 decoder 的哪一步
+
+把它對應到 decoder：
+
+| 機率項 | Decoder 的哪一步算出來 |
+|--------|------------------------|
+| $P(y_1 \mid x)$ | Step 1 的 softmax 輸出 |
+| $P(y_2 \mid y_1, x)$ | Step 2 的 softmax 輸出（用 teacher forcing 把 $y_1 = B$ 餵進去） |
+
+### 4.3 為什麼 encoder 可以放在條件裡？
+
+因為 $c = h_2^{enc}$ 已經把整段輸入 $x_1, x_2$ 壓進一個向量。
+Decoder 透過 $h_0^{dec} = c$ 拿到這份摘要，所以「給定 $x$」這個條件等價於「給定 $c$」。
+
+> **這就是 Seq2Seq 的核心圖：**
+>
+> $$x \;\longrightarrow\; c \;\longrightarrow\; P(y \mid x) \;\longrightarrow\; y$$
+
+下面的數值模擬，目標就是把 $P(B \mid A,B)$ 和 $P(C \mid B, A, B)$ 這兩個數字算出來，
+再用它們組成整段 $P(B, C \mid A, B)$，並算出 loss。
+
+---
+
+## 5. Encoder 前向傳播
+
+### 5.1 參數設定
 
 我們故意選簡單數字：
 
@@ -168,7 +221,7 @@ $$
 h_0^{enc} = 0
 $$
 
-### 4.2 Step 1：讀入 A
+### 5.2 Step 1：讀入 A
 
 A 對應數值是 $1$。
 
@@ -180,7 +233,7 @@ $$
 h_1^{enc} = \tanh(0.9) \approx 0.716
 $$
 
-### 4.3 Step 2：讀入 B
+### 5.3 Step 2：讀入 B
 
 B 對應數值是 $-1$。
 
@@ -203,12 +256,14 @@ h_0^{dec} = h_2^{enc} \approx -0.329
 $$
 
 > 這就是 Seq2Seq 的橋梁：**encoder 的最後狀態，當作 decoder 的起點。**
+>
+> 從機率角度，這條等式就是「把條件 $x$ 編碼成 $c$，再傳給 decoder」。
 
 ---
 
-## 5. Decoder 前向傳播
+## 6. Decoder 前向傳播
 
-### 5.1 Decoder 參數
+### 6.1 Decoder 參數
 
 $$
 w_{xh}^{dec} = 0.7, \quad w_{hh}^{dec} = 0.6, \quad b_h^{dec} = 0.05
@@ -232,7 +287,7 @@ $$
 
 ---
 
-### 5.2 Decoder Step 1
+### 6.2 Decoder Step 1（計算 $P(y_1 \mid x)$）
 
 輸入 `<SOS>`，也就是 $x_1^{dec} = 0.5$。
 
@@ -265,20 +320,22 @@ $$
 做 softmax（此處取近似值）：
 
 $$
-\hat{y}_1 \approx [0.319, 0.382, 0.299]
+\hat{y}_1 = P(y_1 \mid x) \approx [0.319, 0.382, 0.299]
 $$
 
 也就是：
 
-- 預測 A 的機率：0.319
-- 預測 B 的機率：0.382
-- 預測 C 的機率：0.299
+- $P(y_1 = A \mid x) \approx 0.319$
+- $P(y_1 = B \mid x) \approx 0.382$
+- $P(y_1 = C \mid x) \approx 0.299$
 
-而第 1 步正確答案是 **B**。
+而第 1 步正確答案是 **B**，所以對應到的條件機率是：
+
+$$P(y_1 = B \mid x) \approx 0.382$$
 
 ---
 
-### 5.3 Decoder Step 2
+### 6.3 Decoder Step 2（計算 $P(y_2 \mid y_1, x)$）
 
 這裡用 teacher forcing，餵入正確答案 B。B 對應數值是 $-1$。
 
@@ -311,40 +368,106 @@ $$
 softmax 近似得到：
 
 $$
-\hat{y}_2 \approx [0.302, 0.275, 0.423]
+\hat{y}_2 = P(y_2 \mid y_1 = B, x) \approx [0.302, 0.275, 0.423]
 $$
 
-第 2 步正確答案是 **C**。
+也就是：
+
+- $P(y_2 = A \mid y_1=B, x) \approx 0.302$
+- $P(y_2 = B \mid y_1=B, x) \approx 0.275$
+- $P(y_2 = C \mid y_1=B, x) \approx 0.423$
+
+第 2 步正確答案是 **C**，所以對應到的條件機率是：
+
+$$P(y_2 = C \mid y_1 = B, x) \approx 0.423$$
 
 ---
 
-## 6. Loss 計算
+## 7. 整段機率 $P(y \mid x)$ 的數值
 
-### 6.1 第 1 步
+現在我們手上有兩個條件機率：
 
-目標是 B，所以用預測中的第 2 個機率：
+$$P(y_1 = B \mid x) \approx 0.382$$
+
+$$P(y_2 = C \mid y_1 = B, x) \approx 0.423$$
+
+根據第 4 節的機率鏈鎖律：
+
+$$P(y_1 = B, y_2 = C \mid x) = P(y_1 = B \mid x) \times P(y_2 = C \mid y_1 = B, x)$$
+
+代入數值：
+
+$$P(B, C \mid A, B) \approx 0.382 \times 0.423 \approx 0.162$$
+
+**這就是這次模型對「整段正確答案」給出的機率：大約 16.2%。**
+
+幾個觀察：
+
+- 這數字並不高，因為模型還沒訓練
+- 訓練的目標，就是調整參數讓 $P(B, C \mid A, B)$ 慢慢逼近 1
+- 模型的「學習」其實就是在拉高這個條件機率
+
+---
+
+## 8. Loss 計算
+
+接下來看看這個機率怎麼變成 loss。
+
+### 8.1 從機率出發
+
+由前面知道：
+
+$$P(y \mid x) \approx 0.162$$
+
+取對數：
+
+$$\log P(y \mid x) \approx \log(0.162) \approx -1.82$$
+
+加上負號：
+
+$$-\log P(y \mid x) \approx 1.82$$
+
+如果取平均（除以時間步數 2）：
+
+$$\mathcal{L} = -\frac{1}{2}\log P(y \mid x) \approx 0.911$$
+
+---
+
+### 8.2 用單步 loss 加總驗算
+
+#### 第 1 步
+
+目標是 B，所以用 $P(y_1 = B \mid x) \approx 0.382$：
 
 $$
 \mathcal{L}_1 = -\log(0.382) \approx 0.962
 $$
 
-### 6.2 第 2 步
+#### 第 2 步
 
-目標是 C，所以用第 3 個機率：
+目標是 C，所以用 $P(y_2 = C \mid y_1 = B, x) \approx 0.423$：
 
 $$
 \mathcal{L}_2 = -\log(0.423) \approx 0.861
 $$
 
-### 6.3 平均 loss
+#### 平均 loss
 
 $$
 \mathcal{L} = \frac{1}{2}(0.962 + 0.861) = 0.9115
 $$
 
+> **跟 8.1 得到的結果一致！**
+>
+> 因為 $-\log(a \times b) = -\log a - \log b$，所以「整段機率的負對數」自然會等於「每一步負對數的總和」。
+>
+> 這在數學上就是：
+>
+> $$\mathcal{L} = -\log P(y \mid x) = -\sum_t \log P(y_t \mid y_{<t}, x)$$
+
 ---
 
-## 7. Output Layer 反向傳播
+## 9. Output Layer 反向傳播
 
 這一段最重要的公式是：
 
@@ -356,7 +479,7 @@ $$
 
 ---
 
-### 7.1 Step 1 的輸出誤差
+### 9.1 Step 1 的輸出誤差
 
 第 1 步：
 
@@ -382,7 +505,7 @@ $$
 
 ---
 
-### 7.2 Step 2 的輸出誤差
+### 9.2 Step 2 的輸出誤差
 
 第 2 步：
 
@@ -408,7 +531,7 @@ $$
 
 ---
 
-### 7.3 對輸出層權重的梯度
+### 9.3 對輸出層權重的梯度
 
 因為每個類別的 logit 是
 
@@ -474,7 +597,7 @@ $$
 
 ---
 
-## 8. Decoder Hidden 反向傳播
+## 10. Decoder Hidden 反向傳播
 
 輸出層的誤差，會先傳回 decoder hidden。
 
@@ -490,7 +613,7 @@ $$
 w_A = 0.2, \quad w_B = 0.6, \quad w_C = -0.4
 $$
 
-### 8.1 Step 2 先往回傳
+### 10.1 Step 2 先往回傳
 
 $$
 \delta_2^h = 0.2(0.151) + 0.6(0.1375) + (-0.4)(-0.2885)
@@ -516,7 +639,7 @@ $$
 
 ---
 
-### 8.2 Step 1 要加上未來時間的影響
+### 10.2 Step 1 要加上未來時間的影響
 
 第 1 步不只影響自己那一步的輸出，還會透過 recurrent connection 影響第 2 步。
 
@@ -558,7 +681,7 @@ $$
 
 ---
 
-### 8.3 Decoder recurrent 權重梯度
+### 10.3 Decoder recurrent 權重梯度
 
 decoder 的 recurrent 權重是 $w_{hh}^{dec}$，其梯度來自每一步：
 
@@ -588,7 +711,7 @@ $$
 
 ---
 
-## 9. 梯度如何傳回 Encoder
+## 11. 梯度如何傳回 Encoder
 
 這是 Seq2Seq 最重要的一句話：
 
@@ -598,7 +721,7 @@ $$
 
 所以 decoder 第 1 步對初始 hidden 的梯度，會直接傳給 encoder 最後一步。
 
-### 9.1 先看 decoder 傳回來多少
+### 11.1 先看 decoder 傳回來多少
 
 由於
 
@@ -616,7 +739,7 @@ $$
 
 ---
 
-### 9.2 Encoder Step 2
+### 11.2 Encoder Step 2
 
 encoder 第 2 步也有 $\tanh$，所以：
 
@@ -638,7 +761,7 @@ $$
 
 ---
 
-### 9.3 Encoder Step 1
+### 11.3 Encoder Step 1
 
 再往前傳一格：
 
@@ -666,7 +789,7 @@ $$
 
 ---
 
-### 9.4 一個 encoder 權重梯度示意
+### 11.4 一個 encoder 權重梯度示意
 
 例如對 $w_{hh}^{enc}$ 而言：
 
@@ -685,9 +808,13 @@ $$
 
 這就是 Seq2Seq 可訓練的根本原因。
 
+從機率角度看：
+
+> **整段 $P(y \mid x)$ 同時依賴 encoder 和 decoder。要讓這個機率變大，當然必須兩邊都更新。**
+
 ---
 
-## 10. 參數更新示意
+## 12. 參數更新示意
 
 假設學習率：
 
@@ -719,10 +846,11 @@ $$
 
 - 模型在第 1 步應該更傾向輸出 B
 - 所以把有助於 B 的權重稍微拉高
+- 換句話說，下一次再看到 $(A, B)$ 時，$P(y_1 = B \mid x)$ 會比這次的 $0.382$ 更大一些
 
 ---
 
-## 11. 一句話總結
+## 13. 一句話總結
 
 $$
 \text{loss 雖然出現在 decoder，但梯度會穿過 decoder，跨過橋梁，再回到 encoder。}
@@ -732,22 +860,34 @@ $$
 
 > **Seq2Seq 的學習，不是只有輸出端在學；整個 encoder-decoder 都一起被同一個 loss 推著調整。**
 
+從機率視角看：
+
+> **Encoder 和 Decoder 一起合作來學 $P(y \mid x)$；
+> 訓練過程就是不斷讓「正確答案的條件機率」變大。**
+
 ---
 
 ## 最後整理：這個數值例子想讓你看到什麼？
 
 1. Encoder 先把輸入序列壓成最後狀態
 2. Decoder 以這個最後狀態作為起點開始輸出
-3. 每一步輸出都會產生 loss
-4. loss 先傳回 output layer
-5. 再傳回 decoder hidden
-6. 再沿著時間往前傳
-7. 最後跨回 encoder
+3. **每一步 softmax 輸出的，就是條件機率 $P(y_t \mid y_{<t}, x)$**
+4. 把每一步機率乘起來，就是整段的 $P(y \mid x)$
+5. loss 就是 $-\log P(y\mid x)$，等於每步 cross-entropy 的總和
+6. loss 先傳回 output layer
+7. 再傳回 decoder hidden
+8. 再沿著時間往前傳
+9. 最後跨回 encoder
+
+整體機率圖：
+
+$$x \;\longrightarrow\; \text{Encoder} \;\longrightarrow\; c \;\longrightarrow\; \text{Decoder} \;\longrightarrow\; P(y \mid x)$$
 
 如果只記一件事，請記住：
 
 $$
-\boxed{h_0^{dec} = h_{T_x}^{enc}}
+\boxed{h_0^{dec} = h_{T_x}^{enc} \;\;\Longleftrightarrow\;\; \text{Encoder 把「條件 } x \text{」交給 Decoder 算 } P(y \mid x)}
 $$
 
-這一條等號，就是 Seq2Seq 裡 encoder 和 decoder 真正接起來的地方。
+這一條等號，就是 Seq2Seq 裡 encoder 和 decoder 真正接起來的地方——
+也是「條件機率裡的條件」傳遞的地方。
